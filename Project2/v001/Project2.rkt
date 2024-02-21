@@ -1,4 +1,4 @@
-;; Project 1 for CSDS600, Spring 2024
+;; Project 2 for CSDS600, Spring 2024
 ;;
 ;; Group 04
 ;; * David Courtney
@@ -123,6 +123,10 @@
          (extend x (eval-expr expr env) env)
          (error "Using variable before declaring:" x))]
 
+    [(list 'return expr) 
+       (let ((ret-value (eval-expr expr env)))
+         (values env ret-value 'return))]  ; Return a flag indicating execution of a return
+
     ; Handle return statement
     [(list 'return expr) (extend 'return (eval-expr expr env) env)]
 
@@ -144,6 +148,16 @@
              (loop new-env))
            env))]  ; Return the environment if the condition is false
 
+      ; Handle 'begin' statement
+      [(list 'begin stmts ...)
+       (define (exec-sequence statements environment)
+         (if (null? statements)
+             environment  ; No more statements, return the environment
+             (let ((new-env (exec-stmt (car statements) environment)))
+               (exec-sequence (cdr statements) new-env))))
+       (exec-sequence stmts env)]
+
+
     ; Default case for unknown statement types
     [else (error "Unknown statement type" stmt)])
   ) ; end lambda
@@ -152,29 +166,22 @@
 ;; Main interpreter function
 (define interpret
   (lambda (filename)
-    (let* ((parsed-program (parser filename))
-           (initial-env '()))
+    (let* ((parsed-program (parser filename))  ; Start parsing the input file
+           (initial-env '()))  ; Initialize an empty environment
       (define process-program
         (lambda (program env)
-          (if (null? program)
-            (let ((result (lookup 'return env)))
-              (cond ((eq? result #t) 'true)  ;; Return 'true as a symbol
-                    ((eq? result #f) 'false) ;; Return 'false as a symbol
-                    (else result)            ;; Return non-boolean results as-is
-              ) ; end cond
-            ) ; end let
+          (if (null? program)  ; Check if there are no more statements
+              (let ((result (lookup 'return env)))  ; Look for a return value in the environment
+                (cond ((eq? result #t) 'true)  ; Return 'true' for true boolean
+                      ((eq? result #f) 'false) ; Return 'false' for false boolean
+                      (else result)))  ; Return any other non-boolean value as is
+              (let* ((first-stmt (car program))  ; Extract the first statement from the program
+                     (exec-result (exec-stmt first-stmt env))  ; Execute the statement
+                     (new-env (first exec-result))  ; Update the environment
+                     (return-flag (third exec-result)))  ; Check if a return statement was encountered
+                (if (eqv? return-flag 'return)  ; If a return was encountered,
+                    (second exec-result)  ; then return its value
+                    (process-program (cdr program) new-env))))))  ; Otherwise, continue with the rest of the program
+      (process-program parsed-program initial-env))))  ; Begin processing the program
 
-            (let* ((first-stmt (car program))
-                   (new-env (exec-stmt first-stmt env)))
-              (process-program (cdr program) new-env)
-            ) ; end let
 
-          ) ; end if
-        ) ; end lambda
-      ) ; end define
-
-      (process-program parsed-program initial-env)
-
-    ) ; end let
-  ) ; end lambda
-) ; end define

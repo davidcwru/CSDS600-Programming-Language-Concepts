@@ -10,6 +10,8 @@
 
 (require "simpleParser.rkt")
 
+(define uninitialized-vars '())
+
 (define my-assoc-delete-all
   (lambda (key alist)
     (filter (lambda (item) (not (equal? (car item) key))) alist)
@@ -52,22 +54,22 @@
       ) ; end lambda
     ) ; end define
 
-    (define lookup-variable
-      (lambda (x)
-        (let ((val (lookup x env)))
+(define lookup-variable
+  (lambda (var env)
+    (if (member var uninitialized-vars)
+        (error "Variable used before being initialized: " var)
+        (let ((val (lookup var env)))
           (if (eq? val 'uninitialized)
-            (error "Variable used before assigning a value:" x)
-            val
-           ) ; end if
-        ) ; end let
-      ) ; end lambda
-    ) ; end define
+              (error "Variable used before being initialized: " var)
+              val)))))
+
+
 
     (match expr
       ['true true]
       ['false false]
       [(? number? n) n]
-      [(? symbol? x) (lookup-variable x)]
+      [(? symbol? x) (lookup-variable x env)]
       [(list '-  a)   (- 0 (eval-expr a env))]
       [(list '+  a b) (binary-op '+ a b)]
       [(list '-  a b) (binary-op '- a b)]
@@ -94,11 +96,8 @@
     (let ((existing (assoc var env)))
       (if existing
           (cons (cons var value) (my-assoc-delete-all var env))
-          (cons (cons var value) env)
-      )
-    ) ; end let
-  ) ; end lambda
-) ; end define
+          (cons (cons var (if (equal? value 'uninitialized) 'uninitialized value)) env)))))
+
 
 (define exec-stmt
   (lambda (stmt env)
@@ -123,10 +122,6 @@
          (extend x (eval-expr expr env) env)
          (error "Using variable before declaring:" x))]
 
-    [(list 'return expr) 
-       (let ((ret-value (eval-expr expr env)))
-         (values env ret-value 'return))]  ; Return a flag indicating execution of a return
-
     ; Handle return statement
     [(list 'return expr) (extend 'return (eval-expr expr env) env)]
 
@@ -141,20 +136,40 @@
      (if (eval-expr cond env)
          (exec-stmt then-stmt env)
          (exec-stmt else-stmt env))]
+
+
     [(list 'while cond body)
      (let loop ((env env))
        (if (eval-expr cond env)
            (let ((new-env (exec-stmt body env)))
-             (loop new-env))
-           env))]  ; Return the environment if the condition is false
+             (if (assoc 'break new-env)
+                 (my-assoc-delete-all 'break new-env)  ; Remove 'break' and exit loop
+                 (if (assoc 'return new-env)
+                     new-env  ; Return new environment if 'return' is encountered
+                     (loop new-env))))  ; Continue with next iteration
+           env))]  ; Exit loop if condition is false
 
-      ; Handle 'begin' statement
+
+    ; Set a flag for break in the environment
+    [(list 'break)
+     (extend 'break true env)]
+
+
+    ; Set a flag for continue in the environment
+    [(list 'continue) 
+     (extend 'continue true env)]  
+
+    ; Handle 'begin' statement
       [(list 'begin stmts ...)
-       (define (exec-sequence statements environment)
-         (if (null? statements)
-             environment  ; No more statements, return the environment
-             (let ((new-env (exec-stmt (car statements) environment)))
-               (exec-sequence (cdr statements) new-env))))
+(define (exec-sequence statements environment)
+  (if (null? statements)
+      environment  ; No more statements, return the environment
+      (let ((new-env (exec-stmt (car statements) environment)))
+        (if (or (assoc 'return new-env) (assoc 'continue new-env) (assoc 'break new-env))
+            new-env  ; Stop executing further and return the environment
+            (exec-sequence (cdr statements) new-env)))))
+
+
        (exec-sequence stmts env)]
 
 
@@ -166,22 +181,94 @@
 ;; Main interpreter function
 (define interpret
   (lambda (filename)
-    (let* ((parsed-program (parser filename))  ; Start parsing the input file
-           (initial-env '()))  ; Initialize an empty environment
+    (let* ((parsed-program (parser filename))  ; Parse the program from the file
+           (initial-env '()))  ; Start with an empty environment
       (define process-program
         (lambda (program env)
-          (if (null? program)  ; Check if there are no more statements
-              (let ((result (lookup 'return env)))  ; Look for a return value in the environment
-                (cond ((eq? result #t) 'true)  ; Return 'true' for true boolean
-                      ((eq? result #f) 'false) ; Return 'false' for false boolean
-                      (else result)))  ; Return any other non-boolean value as is
-              (let* ((first-stmt (car program))  ; Extract the first statement from the program
-                     (exec-result (exec-stmt first-stmt env))  ; Execute the statement
-                     (new-env (first exec-result))  ; Update the environment
-                     (return-flag (third exec-result)))  ; Check if a return statement was encountered
-                (if (eqv? return-flag 'return)  ; If a return was encountered,
-                    (second exec-result)  ; then return its value
-                    (process-program (cdr program) new-env))))))  ; Otherwise, continue with the rest of the program
-      (process-program parsed-program initial-env))))  ; Begin processing the program
+          (if (null? program)
+              (let ((result (lookup 'return env)))  ; Look for a 'return' in the environment
+                (cond ((eq? result #t) 'true)  ; Convert boolean results to symbols
+                      ((eq? result #f) 'false)
+                      (else result)))  ; Return non-boolean results as-is
+              (let* ((first-stmt (car program))  ; Process the first statement
+                     (new-env (exec-stmt first-stmt env)))
+                (if (assoc 'return new-env)  ; Check if there is a 'return' in the new environment
+                    (let ((return-value (lookup 'return new-env)))  ; Extract the return value
+                      (cond ((eq? return-value #t) 'true)  ; Convert boolean results to symbols, if necessary
+                            ((eq? return-value #f) 'false)
+                            (else return-value)))  ; Return the extracted value
+                    (process-program (cdr program) new-env)))))  ; Otherwise, continue processing
+      ) ; end define
+      (process-program parsed-program initial-env)  ; Start the program processing
+    ) ; end let
+  ) ; end lambda
+) ; end define
 
+
+
+
+; -----
+; Tests
+; -----
+
+(displayln "Run tests from Part 1")
+(display "Test 01 (Expected output is 150)    Actual Output -> ")
+(displayln (interpret "p1_test1.txt"))
+(display "Test 02 (Expected output is -4)     Actual Output -> ")
+(displayln (interpret "p1_test2.txt"))
+(display "Test 03 (Expected output is 10)     Actual Output -> ")
+(displayln (interpret "p1_test3.txt"))
+(display "Test 04 (Expected output is 16)     Actual Output -> ")
+(displayln (interpret "p1_test4.txt"))
+(display "Test 05 (Expected output is 220)    Actual Output -> ")
+(displayln (interpret "p1_test5.txt"))
+(display "Test 06 (Expected output is 5)      Actual Output -> ")
+(displayln (interpret "p1_test6.txt"))
+(display "Test 07 (Expected output is 6)      Actual Output -> ")
+(displayln (interpret "p1_test7.txt"))
+(display "Test 08 (Expected output is 10)     Actual Output -> ")
+(displayln (interpret "p1_test8.txt"))
+(display "Test 09 (Expected output is 5)      Actual Output -> ")
+(displayln (interpret "p1_test9.txt"))
+(display "Test 10 (Expected output is -39)    Actual Output -> ")
+(displayln (interpret "p1_test10.txt"))
+(display "Test 15 (Expected output is true)   Actual Output -> ")
+(displayln (interpret "p1_test15.txt"))
+(display "Test 16 (Expected output is 100)    Actual Output -> ")
+(displayln (interpret "p1_test16.txt"))
+(display "Test 17 (Expected output is false)  Actual Output -> ")
+(displayln (interpret "p1_test17.txt"))
+(display "Test 18 (Expected output is true)   Actual Output -> ")
+(displayln (interpret "p1_test18.txt"))
+(display "Test 19 (Expected output is 128)    Actual Output -> ")
+(displayln (interpret "p1_test19.txt"))
+(display "Test 20 (Expected output is 12)     Actual Output -> ")
+(displayln (interpret "p1_test20.txt"))
+(displayln "End of tests from Part 1")
+(displayln "")
+
+
+(displayln "Run all tests from Part 2")
+(display "Test 01 (Expected output is 20)     Actual Output -> ")
+(displayln (interpret "test1.txt"))
+(display "Test 02 (Expected output is 164)    Actual Output -> ")
+(displayln (interpret "test2.txt"))
+(display "Test 03 (Expected output is 32)     Actual Output -> ")
+(displayln (interpret "test3.txt"))
+(display "Test 04 (Expected output is 2)      Actual Output -> ")
+(displayln (interpret "test4.txt"))
+(display "Test 05 (Expected output is error)  Actual Output -> ")
+(displayln (interpret "test5.txt"))
+(display "Test 06 (Expected output is 25)     Actual Output -> ")
+(displayln (interpret "test6.txt"))
+(display "Test 07 (Expected output is 21)     Actual Output -> ")
+(displayln (interpret "test7.txt"))
+(display "Test 08 (Expected output is 6)      Actual Output -> ")
+(displayln (interpret "test8.txt"))
+(display "Test 09 (Expected output is -1)     Actual Output -> ")
+(displayln (interpret "test9.txt"))
+(displayln "End of tests")
+
+
+;(interpret "test9.txt")
 

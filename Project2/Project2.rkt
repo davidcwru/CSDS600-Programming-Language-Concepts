@@ -1,5 +1,7 @@
 ;; Project 2 for CSDS600, Spring 2024
 ;;
+;; Burn it down and start over.
+;;
 ;; Group 04
 ;; * David Courtney
 ;; * Joey Houser
@@ -10,202 +12,221 @@
 
 (require "simpleParser.rkt")
 
-(define uninitialized-vars '())
+(define uninitialized-vars '(()))
 
-(define my-assoc-delete-all
-  (lambda (key alist)
-    (filter (lambda (item) (not (equal? (car item) key))) alist)
-  ) ; end lambda
-) ; end define
+(define M_value
+  (lambda (expr state)
+    (cond
+      ((number? expr) expr)
+      ((and (not (pair? expr)) (assigned? expr state)) (variable_value expr state))
+      ((and (not (pair? expr)) (declared? expr state)) (error 'error "Using variable before assigning"))
+      ((eq? 'true expr) #t)
+      ((eq? 'false expr) #f)
+      ((not (pair? expr)) (error 'error "Using variable before declaring"))
+      ((eq? (op expr) '+) (+ (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '-) (cond
+                                       ((null? (operand expr)) (- 0 (M_value (a expr) state)))
+                                       (else(- (M_value (a expr) state) (M_value (b expr) state)))))
+      ((eq? (op expr) '*) (* (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '/) (quotient (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '%) (remainder (M_value (a expr) state) (M_value (b expr) state)))
+      (else (M_boolean expr state)))))
 
-(define lookup
-  (lambda (var env)
-    (let ((pair (assoc var env)))
-      (if pair
-        (cdr pair)
-        (error "Using variable before declaring:" var))
-    ) ; end let
-  ) ; end lambda
-) ; end define
+(define M_state
+  (lambda (expr state return continue break)
+    (cond
+      ((eq? (function expr) 'return) (return (M_state-return expr state)))
+      ((eq? (function expr) 'var) (M_state-declaration expr state))
+      ((eq? (function expr) '=) (assign expr state))
+      ((eq? (function expr) 'while) (M_state-while expr state return continue break))
+      ((eq? (function expr) 'if) (M_state-if_else expr state return continue break))
+      ((eq? (function expr) 'begin) (M_state-block expr state return continue break))
+      ((eq? (function expr) 'continue) (continue state))
+      ((eq? (function expr) 'break) (break (pop_layer state)))
+      (else (error 'error "Unknown expression type")))))
 
-(define eval-expr
-  (lambda (expr env)
-    (define binary-op
-      (lambda (op a b)
-        (let ((val-a (eval-expr a env))
-          (val-b (eval-expr b env)))
-          (if (or (eq? val-a 'uninitialized) (eq? val-b 'uninitialized))
-            (error "Attempting to use uninitialized variable in operation")
-          (if (and (eq? op '/) (eq? val-b 0))
-            (error "Division by zero")
-            (if (and (eq? op '%) (eq? val-b 0))
-                (error "Modulo by zero")
-                (case op
-                  ('+ (+ val-a val-b))
-                  ('- (- val-a val-b))
-                  ('* (* val-a val-b))
-                  ('/ (quotient val-a val-b))
-                  ('% (modulo val-a val-b))
-                ) ; end case
-              ) ; end if
-            ) ; end if 
-          ) ; end if
-        ) ; end let
-      ) ; end lambda
-    ) ; end define
-
-(define lookup-variable
-  (lambda (var env)
-    (if (member var uninitialized-vars)
-        (error "Variable used before being initialized: " var)
-        (let ((val (lookup var env)))
-          (if (eq? val 'uninitialized)
-              (error "Variable used before being initialized: " var)
-              val)))))
+(define M_boolean
+  (lambda (expr state)
+    (cond
+      ((or (eq? 'true expr) (eq? #t expr)) #t)
+      ((or (eq? 'false expr) (eq? #f expr)) #f)
+      ((eq? (op expr) '>) (> (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '>=) (>= (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '<) (< (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '<=) (<= (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '!=) (not (eq? (M_value (a expr) state) (M_value (b expr) state))))
+      ((eq? (op expr) '==) (eq? (M_value (a expr) state) (M_value (b expr) state)))
+      ((eq? (op expr) '||) (or (M_boolean (M_value (a expr) state) state) (M_boolean (M_value (b expr) state) state)))
+      ((eq? (op expr) '&&) (and (M_boolean (M_value (a expr) state) state) (M_boolean (M_value (b expr) state) state)))
+      ((eq? (op expr) '!) (not (M_boolean (M_value (a expr) state) state))))))
 
 
+(define M_state-return
+  (lambda (expr state)
+    (cond
+      ((eq? (M_value (return_expr expr) state) #t) 'true)
+      ((eq? (M_value (return_expr expr) state) #f) 'false)
+      (else (M_value (return_expr expr) state)))))
 
-    (match expr
-      ['true true]
-      ['false false]
-      [(? number? n) n]
-      [(? symbol? x) (lookup-variable x env)]
-      [(list '-  a)   (- 0 (eval-expr a env))]
-      [(list '+  a b) (binary-op '+ a b)]
-      [(list '-  a b) (binary-op '- a b)]
-      [(list '*  a b) (binary-op '* a b)]
-      [(list '/  a b) (binary-op '/ a b)]
-      [(list '%  a b) (binary-op '% a b)]
-      [(list '&& a b) (and (eval-expr a env) (eval-expr b env))]
-      [(list '|| a b) (or  (eval-expr a env) (eval-expr b env))]
-      [(list '<= a b) (<=  (eval-expr a env) (eval-expr b env))]
-      [(list '>= a b) (>=  (eval-expr a env) (eval-expr b env))]
-      [(list '>  a b) (>   (eval-expr a env) (eval-expr b env))]
-      [(list '<  a b) (<   (eval-expr a env) (eval-expr b env))]
-      [(list '== a b) (eq? (eval-expr a env) (eval-expr b env))]
-      [(list '!= a b) (not (eq? (eval-expr a env) (eval-expr b env)))]
-      [(list '!  a)   (not (eval-expr a env))]
-      [else (error "Unknown expression type" expr)]
+(define M_state-declaration
+  (lambda (expr state)
+    (cond
+      ((declared? (variable expr) state) (error 'error "redeclaration of variable"))
+      ((value? expr) (add (variable expr) (M_value (val expr) state) state))
+      (else (add (variable expr) 'null state)))))
 
-    ) ; end match
-  ) ; end lambda
-) ; end define
+(define M_state-while
+  (lambda (expr state return continue break)
+    (call/cc
+     (lambda (break)
+       (cond
+         ((M_boolean (condition expr) state) (M_state expr (call/cc (lambda (continue) (M_state (body expr) state return continue break))) return continue break))
+         ((not (M_boolean (condition expr) state)) state))))))
 
-(define extend
-  (lambda (var value env)
-    (let ((existing (assoc var env)))
-      (if existing
-          (cons (cons var value) (my-assoc-delete-all var env))
-          (cons (cons var (if (equal? value 'uninitialized) 'uninitialized value)) env)))))
+(define M_state-if_else
+  (lambda (expr state return continue break)
+    (cond
+      ((M_boolean (condition expr) state) (M_state (expr1 expr) state return continue break))
+      ((and (not (M_boolean (condition expr) state)) (null? (else expr))) state)
+      ((not (M_boolean (condition expr) state)) (M_state (expr2 expr) state return continue break)))))
 
-
-(define exec-stmt
-  (lambda (stmt env)
-  ; (displayln stmt) ; Print the statement being executed for debugging
-  (match stmt
-
-    ; Handle variable declaration without initialization
-    [(list 'var x) 
-     (if (assoc x env)
-         (error "Redefining variable:" x)  ; Prevent redeclaration
-         (extend x 'uninitialized env))]
-
-    ; Handle variable declaration with initialization
-    [(list 'var x expr) 
-     (if (assoc x env)
-         (error "Redefining variable:" x)  ; Prevent redeclaration
-         (extend x (eval-expr expr env) env))]
-
-    ; Handle variable assignment
-    [(list '= x expr)
-     (if (assoc x env)  ; Ensure variable was declared
-         (extend x (eval-expr expr env) env)
-         (error "Using variable before declaring:" x))]
-
-    ; Handle return statement
-    [(list 'return expr) (extend 'return (eval-expr expr env) env)]
-
-    ; Handle if statement without else
-    [(list 'if cond then-stmt) 
-     (if (eval-expr cond env)
-         (exec-stmt then-stmt env)
-         env)]
-
-    ; Handle if statement with else
-    [(list 'if cond then-stmt else-stmt) 
-     (if (eval-expr cond env)
-         (exec-stmt then-stmt env)
-         (exec-stmt else-stmt env))]
+(define M_state-block
+  (lambda (expr state return continue break)
+    (cond
+      ((null? expr) (pop_layer state))
+      ((eq? (function expr) 'begin) (M_state-block (rest expr) (push_layer state) return continue break))
+      (else (M_state-block (rest expr) (M_state (first expr) state return continue break) return continue break)))))
 
 
-    [(list 'while cond body)
-     (let loop ((env env))
-       (if (eval-expr cond env)
-           (let ((new-env (exec-stmt body env)))
-             (if (assoc 'break new-env)
-                 (my-assoc-delete-all 'break new-env)
-                 (if (assoc 'return new-env)
-                     new-env
-                     (loop new-env))))
-           env))]
+(define first car)
+(define rest cdr)
+(define function car)
+(define return_expr cadr)
+(define op car)
+(define a cadr)
+(define b caddr)
+(define condition cadr)
+(define expr1 caddr)
+(define expr2 cadddr)
+(define operand cddr)
+(define variable cadr)
+(define value cddr)
+(define first_variable caar)
+(define val caddr)
+(define variable_def caar)
+(define get_value cadar)
+(define body caddr)
+(define else cdddr)
+(define pop_layer cdr)
+(define first_layer car)
+(define next_layer cdr)
+(define name caar)
+(define get_exception caadr)
+
+(define push_layer
+  (lambda (state)
+    (cons '() state)))
+
+(define declared?
+  (lambda (var state)
+    (cond
+      ((null? state) #f)
+      ((declared?-helper var (first state)) #t)
+      (else (declared? var (rest state))))))
+
+(define declared?-helper
+  (lambda (var state)
+    (cond
+      ((null? state) #f)
+      ((eq? (first_variable state) var) #t)
+      (else  (declared?-helper var (rest state))))))
+
+(define value?
+  (lambda (expr)
+    (cond
+      ((null? (value expr)) #f)
+      (else #t))))
+
+(define insert
+  (lambda (var value state)
+    (cond
+      ((null? state) '())
+      ((declared?-helper var (first state)) (cons (insert-helper var value (first state)) (rest state)))
+      (else (cons (first state) (insert var value (rest state)))))))
+
+(define insert-helper
+  (lambda (var value state)
+    (cond
+      ((null? state) '())
+      ((eq? var (variable_def state)) (cons (cons var (cons value '())) (insert-helper var value (rest state))))
+      (else (cons (first state) (insert-helper var value (rest state)))))))
+
+(define assigned?
+  (lambda (var state)
+    (cond
+      ((null? state) #f)
+      ((assigned?-helper var (first state)) #t)
+      (else (assigned? var (rest state))))))
+
+(define assigned?-helper
+  (lambda (var state)
+    (cond
+      ((null? state) #f)
+      ((and (eq? (first_variable state) var) (not (eq? (get_value state) 'null))) #t)
+      (else (assigned?-helper var (rest state))))))
+
+(define assign
+  (lambda (expr state)
+    (cond
+      ((declared? (variable expr) state) (insert (variable expr) (M_value (val expr) state) state))
+      (else(error 'error "Using variable before declaring")))))
+
+(define add
+  (lambda (var value state)
+    (cons (append (first state) (cons (cons var (cons value '())) '())) (rest state))))
+
+(define variable_value
+  (lambda (var state)
+    (cond
+      ((null? state) (error 'error "using before declaring"))
+      ((number? (variable_value-helper var (first state))) (variable_value-helper var (first state)))
+      ((eq? (variable_value-helper var (first state)) #t) #t)
+      ((eq? (variable_value-helper var (first state)) #f) #f)
+      (else (variable_value var (rest state))))))
+
+(define variable_value-helper
+  (lambda (var state)
+    (cond
+      ((null? state) '())
+      ((eq? var (variable_def state)) (get_value state))
+      (else (variable_value-helper var (rest state))))))
+
+(define rename
+  (lambda (exception state)
+    (cons (rename-helper exception (first_layer state)) (next_layer state))))
+
+(define rename-helper
+  (lambda (e current)
+    (cond
+      ((null? current) '())
+      ((eq? (name current) 'exception) (cons (cons e (cons (get_value current) '())) (rest current)))
+      (else (cons (first current) (rename-helper e (rest current))))))) 
+
+(define process-program
+  (lambda (parsed_code state)
+    (call/cc
+     (lambda (return)
+       (cond
+         ((null? parsed_code) state)
+         (else (process-program (rest parsed_code) (M_state (first parsed_code) state return
+                                                            (lambda (v) (error 'error "invalid use of continue"))
+                                                            (lambda (v2) (error 'error "invalid use of break"))
+                                                            ))))))))
 
 
-    ; Set a flag for break in the environment
-    [(list 'break)
-     (extend 'break true env)]
-
-
-    ; Set a flag for continue in the environment
-    [(list 'continue) 
-     (extend 'continue true env)]  
-
-    ; Handle 'begin' statement
-      [(list 'begin stmts ...)
-(define (exec-sequence statements environment)
-  (if (null? statements)
-      environment  ; No more statements, return the environment
-      (let ((new-env (exec-stmt (car statements) environment)))
-        (if (or (assoc 'return new-env) (assoc 'continue new-env) (assoc 'break new-env))
-            new-env  ; Stop executing further and return the environment
-            (exec-sequence (cdr statements) new-env)))))
-
-
-       (exec-sequence stmts env)]
-
-
-    ; Default case for unknown statement types
-    [else (error "Unknown statement type" stmt)])
-  ) ; end lambda
-) ; end define
-
-;; Main interpreter function
 (define interpret
   (lambda (filename)
-    (let* ((parsed-program (parser filename))  ; Parse the program from the file
-           (initial-env '()))  ; Start with an empty environment
-      (define process-program
-        (lambda (program env)
-          (if (null? program)
-              (let ((result (lookup 'return env)))  ; Look for a 'return' in the environment
-                (cond ((eq? result #t) 'true)  ; Convert boolean results to symbols
-                      ((eq? result #f) 'false)
-                      (else result)))  ; Return non-boolean results as-is
-              (let* ((first-stmt (car program))  ; Process the first statement
-                     (new-env (exec-stmt first-stmt env)))
-                (if (assoc 'return new-env)  ; Check if there is a 'return' in the new environment
-                    (let ((return-value (lookup 'return new-env)))  ; Extract the return value
-                      (cond ((eq? return-value #t) 'true)  ; Convert boolean results to symbols, if necessary
-                            ((eq? return-value #f) 'false)
-                            (else return-value)))  ; Return the extracted value
-                    (process-program (cdr program) new-env)))))  ; Otherwise, continue processing
-      ) ; end define
-      (process-program parsed-program initial-env)  ; Start the program processing
-    ) ; end let
-  ) ; end lambda
-) ; end define
-
-
-
+    (process-program (parser filename) uninitialized-vars)))
 
 ; -----
 ; Tests
@@ -249,30 +270,49 @@
 
 
 (displayln "Run tests from Part 2")
-(display "Test 01 (Expected output is 20)     Actual Output -> ")
+(display "Test 01 (Expected output is 20)       Actual Output -> ")
 (displayln (interpret "p2_test1.txt"))
-(display "Test 02 (Expected output is 164)    Actual Output -> ")
+(display "Test 02 (Expected output is 164)      Actual Output -> ")
 (displayln (interpret "p2_test2.txt"))
-(display "Test 03 (Expected output is 32)     Actual Output -> ")
+(display "Test 03 (Expected output is 32)       Actual Output -> ")
 (displayln (interpret "p2_test3.txt"))
-(display "Test 04 (Expected output is 2)      Actual Output -> ")
+(display "Test 04 (Expected output is 2)        Actual Output -> ")
 (displayln (interpret "p2_test4.txt"))
-(display "Test 05 (Expected output is error)  Actual Output -> ")
-(displayln (interpret "p2_test5.txt"))
-(display "Test 06 (Expected output is 25)     Actual Output -> ")
+;(display "Test 05 (Expected output is error)    Actual Output -> ")
+;(displayln (interpret "p2_test5.txt"))
+(display "Test 06 (Expected output is 25)       Actual Output -> ")
 (displayln (interpret "p2_test6.txt"))
-(display "Test 07 (Expected output is 21)     Actual Output -> ")
+(display "Test 07 (Expected output is 21)       Actual Output -> ")
 (displayln (interpret "p2_test7.txt"))
-(display "Test 08 (Expected output is 6)      Actual Output -> ")
+(display "Test 08 (Expected output is 6)        Actual Output -> ")
 (displayln (interpret "p2_test8.txt"))
-(display "Test 09 (Expected output is -1)     Actual Output -> ")
+(display "Test 09 (Expected output is -1)       Actual Output -> ")
 (displayln (interpret "p2_test9.txt"))
-;(display "Test 10 (Expected output is 789)    Actual Output -> ")
-;(displayln (interpret "p2_test10.txt"))
-(display "Test 14 (Expected output is 12)     Actual Output -> ")
+(display "Test 10 (Expected output is 789)      Actual Output -> ")
+(displayln (interpret "p2_test10.txt"))
+;(display "Test 11 (Expected output is error)    Actual Output -> ")
+;(displayln (interpret "p2_test11.txt"))
+;(display "Test 12 (Expected output is error)    Actual Output -> ")
+;(displayln (interpret "p2_test12.txt"))
+;(display "Test 13 (Expected output is error)    Actual Output -> ")
+;(displayln (interpret "p2_test13.txt"))
+(display "Test 14 (Expected output is 12)       Actual Output -> ")
 (displayln (interpret "p2_test14.txt"))
-(displayln "End of tests")
+#|
+(display "Test 15 (Expected output is 125)      Actual Output -> ")
+(displayln (interpret "p2_test15.txt"))
+(display "Test 16 (Expected output is 110)      Actual Output -> ")
+(displayln (interpret "p2_test16.txt"))
+(display "Test 17 (Expected output is 2000400)  Actual Output -> ")
+(displayln (interpret "p2_test17.txt"))
+(display "Test 18 (Expected output is 101)      Actual Output -> ")
+(displayln (interpret "p2_test18.txt"))
+(display "Test 19 (Expected output is error)    Actual Output -> ")
+(displayln (interpret "p2_test19.txt"))
+|#
+(displayln "End of tests from Part 2")
+(displayln "")
 
 
-;(interpret "p2_test9.txt")
+;(interpret "test9.txt")
 

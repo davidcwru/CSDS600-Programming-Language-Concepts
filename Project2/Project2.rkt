@@ -143,11 +143,11 @@
        (if (eval-expr cond env)
            (let ((new-env (exec-stmt body env)))
              (if (assoc 'break new-env)
-                 (my-assoc-delete-all 'break new-env)  ; Remove 'break' and exit loop
+                 (my-assoc-delete-all 'break new-env)
                  (if (assoc 'return new-env)
-                     new-env  ; Return new environment if 'return' is encountered
-                     (loop new-env))))  ; Continue with next iteration
-           env))]  ; Exit loop if condition is false
+                     new-env
+                     (loop new-env))))
+           env))]
 
 
     ; Set a flag for break in the environment
@@ -248,27 +248,31 @@
 (displayln "")
 
 
-(displayln "Run all tests from Part 2")
+(displayln "Run tests from Part 2")
 (display "Test 01 (Expected output is 20)     Actual Output -> ")
-(displayln (interpret "test1.txt"))
+(displayln (interpret "p2_test1.txt"))
 (display "Test 02 (Expected output is 164)    Actual Output -> ")
-(displayln (interpret "test2.txt"))
+(displayln (interpret "p2_test2.txt"))
 (display "Test 03 (Expected output is 32)     Actual Output -> ")
-(displayln (interpret "test3.txt"))
+(displayln (interpret "p2_test3.txt"))
 (display "Test 04 (Expected output is 2)      Actual Output -> ")
-(displayln (interpret "test4.txt"))
+(displayln (interpret "p2_test4.txt"))
 (display "Test 05 (Expected output is error)  Actual Output -> ")
-(displayln (interpret "test5.txt"))
+(displayln (interpret "p2_test5.txt"))
 (display "Test 06 (Expected output is 25)     Actual Output -> ")
-(displayln (interpret "test6.txt"))
+(displayln (interpret "p2_test6.txt"))
 (display "Test 07 (Expected output is 21)     Actual Output -> ")
-(displayln (interpret "test7.txt"))
+(displayln (interpret "p2_test7.txt"))
 (display "Test 08 (Expected output is 6)      Actual Output -> ")
-(displayln (interpret "test8.txt"))
+(displayln (interpret "p2_test8.txt"))
 (display "Test 09 (Expected output is -1)     Actual Output -> ")
-(displayln (interpret "test9.txt"))
+(displayln (interpret "p2_test9.txt"))
+;(display "Test 10 (Expected output is 789)    Actual Output -> ")
+;(displayln (interpret "p2_test10.txt"))
+(display "Test 14 (Expected output is 12)     Actual Output -> ")
+(displayln (interpret "p2_test14.txt"))
 (displayln "End of tests")
 
 
-;(interpret "test9.txt")
+;(interpret "p2_test9.txt")
 

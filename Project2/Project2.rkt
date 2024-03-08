@@ -33,16 +33,20 @@
       (else (M_boolean expr state)))))
 
 (define M_state
-  (lambda (expr state return continue break)
+  (lambda (expr state return continue break throw)
     (cond
       ((eq? (function expr) 'return) (return (M_state-return expr state)))
       ((eq? (function expr) 'var) (M_state-declaration expr state))
       ((eq? (function expr) '=) (assign expr state))
-      ((eq? (function expr) 'while) (M_state-while expr state return continue break))
-      ((eq? (function expr) 'if) (M_state-if_else expr state return continue break))
-      ((eq? (function expr) 'begin) (M_state-block expr state return continue break))
+      ((eq? (function expr) 'while) (M_state-while expr state return continue break throw))
+      ((eq? (function expr) 'if) (M_state-if_else expr state return continue break throw))
+      ((eq? (function expr) 'begin) (M_state-block expr state return continue break throw))
       ((eq? (function expr) 'continue) (continue state))
       ((eq? (function expr) 'break) (break (pop_layer state)))
+      ((eq? (function expr) 'throw) (throw (add 'exception (M_value (throw_val expr) state) state)))
+      ((eq? (function expr) 'try) (M_state-try expr state return continue break throw))
+      ((eq? (function expr) 'catch) (M_state-catch expr state return continue break throw))
+      ((eq? (function expr) 'finally) (M_state-finally expr state return continue break throw))
       (else (error 'error "Unknown expression type")))))
 
 (define M_boolean
@@ -76,26 +80,55 @@
       (else (add (variable expr) 'null state)))))
 
 (define M_state-while
-  (lambda (expr state return continue break)
+  (lambda (expr state return continue break throw)
     (call/cc
      (lambda (break)
        (cond
-         ((M_boolean (condition expr) state) (M_state expr (call/cc (lambda (continue) (M_state (body expr) state return continue break))) return continue break))
+         ((M_boolean (condition expr) state) (M_state expr (call/cc (lambda (continue) (M_state (body expr) state return continue break throw))) return continue break throw))
          ((not (M_boolean (condition expr) state)) state))))))
 
 (define M_state-if_else
-  (lambda (expr state return continue break)
+  (lambda (expr state return continue break throw)
     (cond
-      ((M_boolean (condition expr) state) (M_state (expr1 expr) state return continue break))
+      ((M_boolean (condition expr) state) (M_state (expr1 expr) state return continue break throw))
       ((and (not (M_boolean (condition expr) state)) (null? (else expr))) state)
-      ((not (M_boolean (condition expr) state)) (M_state (expr2 expr) state return continue break)))))
+      ((not (M_boolean (condition expr) state)) (M_state (expr2 expr) state return continue break throw)))))
 
 (define M_state-block
-  (lambda (expr state return continue break)
+  (lambda (expr state return continue break throw)
     (cond
       ((null? expr) (pop_layer state))
-      ((eq? (function expr) 'begin) (M_state-block (rest expr) (push_layer state) return continue break))
-      (else (M_state-block (rest expr) (M_state (first expr) state return continue break) return continue break)))))
+      ((eq? (function expr) 'begin) (M_state-block (rest expr) (push_layer state) return continue break throw))
+      (else (M_state-block (rest expr) (M_state (first expr) state return continue break throw) return continue break throw)))))
+
+(define M_state-try
+  (lambda (expr state return continue break throw)
+    (cond
+      ((and (null? (catch_exper expr)) (null? (finally_expr expr))) (error 'error "try without catch and finally"))
+      (else (M_state-finally (finally_expr expr) (M_state-catch (catch_exper expr) (call/cc (lambda (throw) (try-helper expr (try_it expr) state return continue break throw))) return continue break throw) return continue break throw)))))
+
+(define M_state-catch
+  (lambda (catch_exper state return continue break throw)
+       (cond
+         ((null? catch_exper) state)
+         ((and (eq? (function catch_exper) 'catch) (declared? 'exception state)) (M_state-catch (catch_expr catch_exper) (rename (get_exception catch_exper) state) return continue break throw))
+         ((eq? (function catch_exper) 'catch) state)
+         (else (M_state-catch (rest catch_exper) (M_state (first catch_exper) state return continue break throw) return continue break throw)))))
+
+(define M_state-finally
+  (lambda (expr state return continue break throw)
+    (cond
+      ((null? expr) state)
+      (else (M_state-finally (rest expr) (M_state (first expr) state return continue break throw) return continue break throw)))))
+
+
+(define try-helper
+  (lambda (try expr state return continue break throw)
+    (cond
+      ((null? expr) state)
+      ((eq? 'return (function (first expr))) (M_state (first expr) (M_state-finally (finally_expr try) state return continue break throw) return continue break throw))
+      ((eq? 'break (function (first expr))) (M_state (first expr) (M_state-finally (finally_expr try) state return continue break throw) return continue break throw))
+      (else (try-helper try (rest expr) (M_state (first expr) state return continue break throw) return continue break throw)))))
 
 
 (define first car)
@@ -121,11 +154,26 @@
 (define first_layer car)
 (define next_layer cdr)
 (define name caar)
+(define throw_val cadr)
+(define catch_expr caddr)
+(define try_it cadr)
 (define get_exception caadr)
 
 (define push_layer
   (lambda (state)
     (cons '() state)))
+
+(define catch_exper
+  (lambda (expr)
+    (cond
+      ((null? (caddr expr)) '())
+      (else (caddr expr)))))
+
+(define finally_expr
+  (lambda (cmd)
+    (cond
+      ((null? (cadddr cmd)) '())
+      (else (cadr (cadddr cmd))))))
 
 (define declared?
   (lambda (var state)
@@ -219,8 +267,9 @@
        (cond
          ((null? parsed_code) state)
          (else (process-program (rest parsed_code) (M_state (first parsed_code) state return
-                                                            (lambda (v) (error 'error "invalid use of continue"))
-                                                            (lambda (v2) (error 'error "invalid use of break"))
+                                                            (lambda (v) (error 'error "continue outside of loop"))
+                                                            (lambda (v2) (error 'error "break outside of loop"))
+                                                            (lambda (v3) (error 'error "throw outside of loop"))
                                                             ))))))))
 
 
@@ -232,44 +281,48 @@
 ; Tests
 ; -----
 
-(displayln "Run tests from Part 1")
-(display "Test 01 (Expected output is 150)    Actual Output -> ")
+(displayln "Running tests from Part 1")
+(display "Test 01 (Expected output is 150)      Actual Output -> ")
 (displayln (interpret "p1_test1.txt"))
-(display "Test 02 (Expected output is -4)     Actual Output -> ")
+(display "Test 02 (Expected output is -4)       Actual Output -> ")
 (displayln (interpret "p1_test2.txt"))
-(display "Test 03 (Expected output is 10)     Actual Output -> ")
+(display "Test 03 (Expected output is 10)       Actual Output -> ")
 (displayln (interpret "p1_test3.txt"))
-(display "Test 04 (Expected output is 16)     Actual Output -> ")
+(display "Test 04 (Expected output is 16)       Actual Output -> ")
 (displayln (interpret "p1_test4.txt"))
-(display "Test 05 (Expected output is 220)    Actual Output -> ")
+(display "Test 05 (Expected output is 220)      Actual Output -> ")
 (displayln (interpret "p1_test5.txt"))
-(display "Test 06 (Expected output is 5)      Actual Output -> ")
+(display "Test 06 (Expected output is 5)        Actual Output -> ")
 (displayln (interpret "p1_test6.txt"))
-(display "Test 07 (Expected output is 6)      Actual Output -> ")
+(display "Test 07 (Expected output is 6)        Actual Output -> ")
 (displayln (interpret "p1_test7.txt"))
-(display "Test 08 (Expected output is 10)     Actual Output -> ")
+(display "Test 08 (Expected output is 10)       Actual Output -> ")
 (displayln (interpret "p1_test8.txt"))
-(display "Test 09 (Expected output is 5)      Actual Output -> ")
+(display "Test 09 (Expected output is 5)        Actual Output -> ")
 (displayln (interpret "p1_test9.txt"))
-(display "Test 10 (Expected output is -39)    Actual Output -> ")
+(display "Test 10 (Expected output is -39)      Actual Output -> ")
 (displayln (interpret "p1_test10.txt"))
-(display "Test 15 (Expected output is true)   Actual Output -> ")
+(displayln "Test 11 (Expected output is error)    Skipping...  ")
+(displayln "Test 12 (Expected output is error)    Skipping...  ")
+(displayln "Test 13 (Expected output is error)    Skipping...  ")
+(displayln "Test 14 (Expected output is error)    Skipping...  ")
+(display "Test 15 (Expected output is true)     Actual Output -> ")
 (displayln (interpret "p1_test15.txt"))
-(display "Test 16 (Expected output is 100)    Actual Output -> ")
+(display "Test 16 (Expected output is 100)      Actual Output -> ")
 (displayln (interpret "p1_test16.txt"))
-(display "Test 17 (Expected output is false)  Actual Output -> ")
+(display "Test 17 (Expected output is false)    Actual Output -> ")
 (displayln (interpret "p1_test17.txt"))
-(display "Test 18 (Expected output is true)   Actual Output -> ")
+(display "Test 18 (Expected output is true)     Actual Output -> ")
 (displayln (interpret "p1_test18.txt"))
-(display "Test 19 (Expected output is 128)    Actual Output -> ")
+(display "Test 19 (Expected output is 128)      Actual Output -> ")
 (displayln (interpret "p1_test19.txt"))
-(display "Test 20 (Expected output is 12)     Actual Output -> ")
+(display "Test 20 (Expected output is 12)       Actual Output -> ")
 (displayln (interpret "p1_test20.txt"))
 (displayln "End of tests from Part 1")
 (displayln "")
 
 
-(displayln "Run tests from Part 2")
+(displayln "Running tests from Part 2")
 (display "Test 01 (Expected output is 20)       Actual Output -> ")
 (displayln (interpret "p2_test1.txt"))
 (display "Test 02 (Expected output is 164)      Actual Output -> ")
@@ -278,8 +331,7 @@
 (displayln (interpret "p2_test3.txt"))
 (display "Test 04 (Expected output is 2)        Actual Output -> ")
 (displayln (interpret "p2_test4.txt"))
-;(display "Test 05 (Expected output is error)    Actual Output -> ")
-;(displayln (interpret "p2_test5.txt"))
+(displayln "Test 05 (Expected output is error)    Skipping...  ")
 (display "Test 06 (Expected output is 25)       Actual Output -> ")
 (displayln (interpret "p2_test6.txt"))
 (display "Test 07 (Expected output is 21)       Actual Output -> ")
@@ -290,15 +342,12 @@
 (displayln (interpret "p2_test9.txt"))
 (display "Test 10 (Expected output is 789)      Actual Output -> ")
 (displayln (interpret "p2_test10.txt"))
-;(display "Test 11 (Expected output is error)    Actual Output -> ")
-;(displayln (interpret "p2_test11.txt"))
-;(display "Test 12 (Expected output is error)    Actual Output -> ")
-;(displayln (interpret "p2_test12.txt"))
-;(display "Test 13 (Expected output is error)    Actual Output -> ")
-;(displayln (interpret "p2_test13.txt"))
+(displayln "Test 11 (Expected output is error)    Skipping...  ")
+(displayln "Test 12 (Expected output is error)    Skipping...  ")
+(displayln "Test 13 (Expected output is error)    Skipping...  ")
 (display "Test 14 (Expected output is 12)       Actual Output -> ")
 (displayln (interpret "p2_test14.txt"))
-#|
+
 (display "Test 15 (Expected output is 125)      Actual Output -> ")
 (displayln (interpret "p2_test15.txt"))
 (display "Test 16 (Expected output is 110)      Actual Output -> ")
@@ -307,12 +356,18 @@
 (displayln (interpret "p2_test17.txt"))
 (display "Test 18 (Expected output is 101)      Actual Output -> ")
 (displayln (interpret "p2_test18.txt"))
-(display "Test 19 (Expected output is error)    Actual Output -> ")
-(displayln (interpret "p2_test19.txt"))
-|#
+(displayln "Test 19 (Expected output is error)    Skipping...  ")
 (displayln "End of tests from Part 2")
 (displayln "")
 
 
-;(interpret "test9.txt")
-
+(displayln "Run the following tests manually, and ensure each one generates the appropriate error.")
+(displayln "Part 1, Test 11: (displayln (interpret \"p1_test11.txt\"))")
+(displayln "Part 1, Test 12: (displayln (interpret \"p1_test12.txt\"))")
+(displayln "Part 1, Test 13: (displayln (interpret \"p1_test13.txt\"))")
+(displayln "Part 1, Test 14: (displayln (interpret \"p1_test14.txt\"))")
+(displayln "Part 2, Test 05: (displayln (interpret \"p2_test5.txt\"))")
+(displayln "Part 2, Test 11: (displayln (interpret \"p2_test11.txt\"))")
+(displayln "Part 2, Test 12: (displayln (interpret \"p2_test12.txt\"))")
+(displayln "Part 2, Test 13: (displayln (interpret \"p2_test13.txt\"))")
+(displayln "Part 2, Test 19: (displayln (interpret \"p2_test19.txt\"))")

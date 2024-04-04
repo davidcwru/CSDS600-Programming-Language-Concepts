@@ -10,47 +10,48 @@
 
 (require "functionparser.rkt")
 
-(define evaluateExpression
-  (lambda (expr state throw)
+(define eval-expression
+  (lambda (expr environment throw)
     (cond
       ((number? expr) expr)
       ((eq? expr 'true) "true")
       ((eq? expr 'false) "false")
-      ((not (list? expr)) (lookup expr state))
-      (else (evaluateOperator expr state throw)))))
+      ((not (list? expr)) (lookup expr environment))
+      (else (evaluateOperator expr environment throw)))))
+
 (define evaluateOperator
-  (lambda (expr state throw)
+  (lambda (expr environment throw)
     (cond
-      ((eq? '! (operator expr)) (not (evaluateExpression (operand1 expr) state throw)))
-      ((and (eq? '- (operator expr)) (= 2 (length expr))) (- (evaluateExpression (operand1 expr) state throw)))
-      (else (evaluateOperator-helper expr (evaluateExpression (operand1 expr) state throw) state throw)))))
+      ((eq? '! (operator expr)) (not (eval-expression (operand1 expr) environment throw)))
+      ((and (eq? '- (operator expr)) (= 2 (length expr))) (- (eval-expression (operand1 expr) environment throw)))
+      (else (evaluateOperator-helper expr (eval-expression (operand1 expr) environment throw) environment throw)))))
 
 (define evaluateOperator-helper
-  (lambda (expr operatorValue state throw)
+  (lambda (expr operatorValue environment throw)
     (cond
-      ((eq? '+ (operator expr)) (+ operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '- (operator expr)) (- operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '* (operator expr)) (* operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '/ (operator expr)) (quotient operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '% (operator expr)) (remainder operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '== (operator expr)) (isEqual? operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '!= (operator expr)) (not (isEqual? operatorValue (evaluateExpression (operand2 expr) state throw))))
-      ((eq? '< (operator expr)) (< operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '> (operator expr)) (> operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '<= (operator expr)) (<= operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '>= (operator expr)) (>= operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '|| (operator expr)) (or operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? '&& (operator expr)) (and operatorValue (evaluateExpression (operand2 expr) state throw)))
-      ((eq? 'funcall (statementType expr)) (evaluateFunctionCall expr state throw))
+      ((eq? '+ (operator expr)) (+ operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '- (operator expr)) (- operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '* (operator expr)) (* operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '/ (operator expr)) (quotient operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '% (operator expr)) (remainder operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '== (operator expr)) (isequal? operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '!= (operator expr)) (not (isequal? operatorValue (eval-expression (operand2 expr) environment throw))))
+      ((eq? '< (operator expr)) (< operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '> (operator expr)) (> operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '<= (operator expr)) (<= operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '>= (operator expr)) (>= operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '|| (operator expr)) (or operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? '&& (operator expr)) (and operatorValue (eval-expression (operand2 expr) environment throw)))
+      ((eq? 'funcall (statementType expr)) (evaluateFunctionCall expr environment throw))
       (else (error 'error "Erroneous expression")))))
 
 (define evaluateParameter
-  (lambda (parameterValue-list state throw)
+  (lambda (parameterValue-list environment throw)
     (if (null? parameterValue-list) '()
-        (cons (evaluateExpression (car parameterValue-list) state throw) (evaluateParameter (cdr parameterValue-list) state throw)))))
+        (cons (eval-expression (car parameterValue-list) environment throw) (evaluateParameter (cdr parameterValue-list) environment throw)))))
 
 
-(define isEqual?
+(define isequal?
   (lambda (val1 val2)
     (if (and (number? val1) (number? val2))
         (= val1 val2)
@@ -58,21 +59,21 @@
 
 
 (define interpretStatements
-  (lambda (statements state return break continue throw)
+  (lambda (statements environment return break continue throw)
     (if (null? statements)
-        (evaluateFunction state return break continue throw)
-        (interpretStatements (rest statements) (M_state (first statements) state return break continue throw) return break continue throw))))
+        (evaluateFunction environment return break continue throw)
+        (interpretStatements (remainingframes statements) (M_state (first statements) environment return break continue throw) return break continue throw))))
 
 (define evaluateFunction
-  (lambda (state return break continue throw)
-      (evaluateFunctionCallBody (mainFunctionBody (lookup 'main state)) (pushFrame state) return break continue throw)))
+  (lambda (environment return break continue throw)
+      (evaluateFunctionCallBody (mainFunctionBody (lookup 'main environment)) (push-frame environment) return break continue throw)))
 
 (define evaluateFunctionCall
-  (lambda (statement state throw)
+  (lambda (statement environment throw)
     (call/cc
      (lambda (func-return)
-      (evaluateFunctionCallBody (functionBody (lookup (functionName statement) state))
-      (addParameter (parameterName (lookup (functionName statement) state)) (evaluateParameter (parameterValue statement) state throw) (append (pushFrame (findScope (functionName statement) state)) state))
+      (evaluateFunctionCallBody (functionBody (lookup (functionName statement) environment))
+      (addParameter (parameterName (lookup (functionName statement) environment)) (evaluateParameter (parameterValue statement) environment throw) (append (push-frame (findScope (functionName statement) environment)) environment))
       func-return
       (lambda (env) (error 'error "'break' statement utilized outside a loop context"))
       (lambda (env) (error 'error "'continue' statement utilized outside a loop context"))
@@ -80,19 +81,19 @@
       ))))
 
 (define evaluateFunctionCallBody
-  (lambda (body state return break continue throw)
+  (lambda (body environment return break continue throw)
     (cond
-      ((null? body) (popFrame state))
-      ((eq? 'var (statementType (first body))) (evaluateFunctionCallBody (rest body) (evaluateFunctionDeclaration (first body) state throw) return break continue throw))
-      (else (evaluateFunctionCallBody (rest body) (M_state (first body) state return break continue throw) return break continue throw)))))
+      ((null? body) (pop-frame environment))
+      ((eq? 'var (statementType (first body))) (evaluateFunctionCallBody (remainingframes body) (evaluateFunctionDeclaration (first body) environment throw) return break continue throw))
+      (else (evaluateFunctionCallBody (remainingframes body) (M_state (first body) environment return break continue throw) return break continue throw)))))
 
 
-(define evaluateFunctionCall-return-state
-  (lambda (statement state return break continue throw)
+(define evaluateFunctionCall-return-environment
+  (lambda (statement environment return break continue throw)
     (call/cc
      (lambda (env-return)
-       (evaluateFunctionCallBodyState (functionBody (lookup (functionName statement) state))
-                                         (addParameter (parameterName (lookup (functionName statement) state)) (evaluateParameter (parameterValue statement) state throw) (append (pushFrame (findScope (functionName statement) state)) state))
+       (evaluateFunctionCallBodyState (functionBody (lookup (functionName statement) environment))
+                                         (addParameter (parameterName (lookup (functionName statement) environment)) (evaluateParameter (parameterValue statement) environment throw) (append (push-frame (findScope (functionName statement) environment)) environment))
                                          return
                                          (lambda (env) (error 'error "'break' statement utilized outside a loop context"))
                                          (lambda (env) (error 'error "'continue' statement utilized outside a loop context"))
@@ -100,129 +101,129 @@
                                          env-return)))))
 
 (define evaluateFunctionCallBodyState
-  (lambda (body state return break continue throw env-return)
+  (lambda (body environment return break continue throw env-return)
     (cond
-      ((null? body) state)
-      ((eq? 'return (currentStatementType body)) (env-return (popFrame state)))
-      ((eq? 'var (statementType (first  body))) (evaluateFunctionCallBodyState (rest body) (evaluateFunctionDeclaration (first body) state throw) return break continue throw env-return))
-      (else (evaluateFunctionCallBodyState (rest body) (M_state (first body) state return break continue throw) return break continue throw env-return)))))
+      ((null? body) environment)
+      ((eq? 'return (currentStatementType body)) (env-return (pop-frame environment)))
+      ((eq? 'var (statementType (first  body))) (evaluateFunctionCallBodyState (remainingframes body) (evaluateFunctionDeclaration (first body) environment throw) return break continue throw env-return))
+      (else (evaluateFunctionCallBodyState (remainingframes body) (M_state (first body) environment return break continue throw) return break continue throw env-return)))))
 
 (define evaluateFunctionDeclaration
-  (lambda (statement state throw)
-    (if (declared?-list (getVar statement) (variables (car state)))
-        (M_state-assign statement state throw)
-        (M_state-declare statement state throw))))
+  (lambda (statement environment throw)
+    (if (declared?-list (getVar statement) (variables (car environment)))
+        (M_state-assign statement environment throw)
+        (M_state-declare statement environment throw))))
 
 
 
 (define M_state
-  (lambda (statement state return break continue throw)
+  (lambda (statement environment return break continue throw)
     (cond
-      ((eq? 'return (statementType statement)) (M_state-return statement state return throw))
-      ((eq? 'var (statementType statement)) (M_state-declare statement state throw))
-      ((eq? '= (statementType statement)) (M_state-assign statement state throw))
-      ((eq? 'if (statementType statement)) (M_state-ifElse statement state return break continue throw))
-      ((eq? 'while (statementType statement)) (M_state-while statement state return throw))
-      ((eq? 'continue (statementType statement)) (continue state))
-      ((eq? 'break (statementType statement)) (break state))
-      ((eq? 'begin (statementType statement)) (M_state-block statement state return break continue throw))
-      ((eq? 'throw (statementType statement)) (M_state-throw statement state throw))
-      ((eq? 'try (statementType statement)) (M_state-try statement state return break continue throw))
-      ((eq? 'function (statementType statement)) (M_state-function statement state return break continue throw))
-      ((eq? 'funcall (statementType statement)) (evaluateFunctionCall-return-state statement state return break continue throw))
+      ((eq? 'return (statementType statement)) (M_state-return statement environment return throw))
+      ((eq? 'var (statementType statement)) (M_state-declare statement environment throw))
+      ((eq? '= (statementType statement)) (M_state-assign statement environment throw))
+      ((eq? 'if (statementType statement)) (M_state-ifElse statement environment return break continue throw))
+      ((eq? 'while (statementType statement)) (M_state-while statement environment return throw))
+      ((eq? 'continue (statementType statement)) (continue environment))
+      ((eq? 'break (statementType statement)) (break environment))
+      ((eq? 'begin (statementType statement)) (M_state-block statement environment return break continue throw))
+      ((eq? 'throw (statementType statement)) (M_state-throw statement environment throw))
+      ((eq? 'try (statementType statement)) (M_state-try statement environment return break continue throw))
+      ((eq? 'function (statementType statement)) (M_state-function statement environment return break continue throw))
+      ((eq? 'funcall (statementType statement)) (evaluateFunctionCall-return-environment statement environment return break continue throw))
       (else (error 'error "Unrecognized statement" (statementType statement))))))
   
 (define M_state-function
-  (lambda (statement state return break continue throw)
+  (lambda (statement environment return break continue throw)
     (cond
-      ((null? (FunctionsBody statement)) state)
-      (else (insert (cadr statement) (box (FunctionsBodyParameter statement)) state)))))
+      ((null? (FunctionsBody statement)) environment)
+      (else (insert (cadr statement) (box (FunctionsBodyParameter statement)) environment)))))
 
 (define M_state-return
-  (lambda (statement state return throw)
-        (return (evaluateExpression (get statement) state throw))))
+  (lambda (statement environment return throw)
+        (return (eval-expression (get statement) environment throw))))
 
 (define M_state-declare
-  (lambda (statement state throw)
+  (lambda (statement environment throw)
     (if (value? statement)
-        (insert (getVar statement) (box (evaluateExpression (getVal statement) state throw)) state)
-        (insert (getVar statement) (box 'novalue) state))))
+        (insert (getVar statement) (box (eval-expression (getVal statement) environment throw)) environment)
+        (insert (getVar statement) (box 'novalue) environment))))
 
 (define M_state-assign
-  (lambda (statement state throw)
-    (update (getLeft statement) (evaluateExpression (getRight statement) state throw) state)))
+  (lambda (statement environment throw)
+    (update (getLeft statement) (eval-expression (getRight statement) environment throw) environment)))
 
 (define M_state-ifElse
-  (lambda (statement state return break continue throw)
+  (lambda (statement environment return break continue throw)
     (cond
-      ((evaluateExpression (get statement) state throw) (M_state (then statement) state return break continue throw))
-      ((else? statement) (M_state (else statement) state return break continue throw))
-      (else state))))
+      ((eval-expression (get statement) environment throw) (M_state (then statement) environment return break continue throw))
+      ((else? statement) (M_state (else statement) environment return break continue throw))
+      (else environment))))
 
 (define M_state-while
-  (lambda (statement state return throw)
+  (lambda (statement environment return throw)
     (call/cc
      (lambda (break)
-       (letrec ((loop (lambda (condition body state)
-                        (if (evaluateExpression condition state throw)
-                            (loop condition body (M_state body state return break (lambda (env) (break (loop condition body env))) throw))
-                         state))))
-         (loop (get statement) (body statement) state))))))
+       (letrec ((loop (lambda (condition body environment)
+                        (if (eval-expression condition environment throw)
+                            (loop condition body (M_state body environment return break (lambda (env) (break (loop condition body env))) throw))
+                         environment))))
+         (loop (get statement) (body statement) environment))))))
 
 (define M_state-block
-  (lambda (statement state return break continue throw)
-    (popFrame (blockBody (cdr statement)
-                                         (pushFrame state)
+  (lambda (statement environment return break continue throw)
+    (pop-frame (blockBody (cdr statement)
+                                         (push-frame environment)
                                          return
-                                         (lambda (env) (break (popFrame env)))
-                                         (lambda (env) (continue (popFrame env)))
-                                         (lambda (v env) (throw v (popFrame env)))))))
+                                         (lambda (env) (break (pop-frame env)))
+                                         (lambda (env) (continue (pop-frame env)))
+                                         (lambda (v env) (throw v (pop-frame env)))))))
 
 (define blockBody
-  (lambda (body state return break continue throw)
+  (lambda (body environment return break continue throw)
     (cond
-      ((null? body) state)
-      ((null? (cdr body)) (M_state (car body) state return break continue throw))
-      (else (blockBody (cdr body) (M_state (car body) state return break continue throw) return break continue throw)))))
+      ((null? body) environment)
+      ((null? (cdr body)) (M_state (car body) environment return break continue throw))
+      (else (blockBody (cdr body) (M_state (car body) environment return break continue throw) return break continue throw)))))
 
 (define M_state-throw
-  (lambda (statement state throw)
-    (throw (evaluateExpression (get statement) state throw) state)))
+  (lambda (statement environment throw)
+    (throw (eval-expression (get statement) environment throw) environment)))
 
 (define throwCatch
-  (lambda (catchStatement state return break continue throw jump finallyBlock)
+  (lambda (catchStatement environment return break continue throw jump finallyBlock)
     (cond
       ((null? catchStatement) (lambda (ex env) (throw ex (M_state-block finallyBlock env return break continue throw)))) 
       ((not (eq? 'catch (statementType catchStatement))) (error 'error "Improper 'catch' statement"))
       (else (lambda (ex env)
               (jump (M_state-block finallyBlock
-                                     (popFrame (throwCatchBody 
+                                     (pop-frame (throwCatchBody 
                                                  (body catchStatement) 
-                                                 (insert (catchVariable catchStatement) (box ex) (pushFrame env))
+                                                 (insert (catchVariable catchStatement) (box ex) (push-frame env))
                                                  return 
-                                                 (lambda (env2) (break (popFrame env2))) 
-                                                 (lambda (env2) (continue (popFrame env2))) 
-                                                 (lambda (v env2) (throw v (popFrame env2)))))
+                                                 (lambda (env2) (break (pop-frame env2))) 
+                                                 (lambda (env2) (continue (pop-frame env2))) 
+                                                 (lambda (v env2) (throw v (pop-frame env2)))))
                                      return break continue throw)))))))
 
 (define throwCatchBody
-  (lambda (body state return break continue throw)
+  (lambda (body environment return break continue throw)
     (cond
-      ((null? body) state)
-      (else (throwCatchBody (rest body) (M_state (first body) state return break continue throw) return break continue throw)))))
+      ((null? body) environment)
+      (else (throwCatchBody (remainingframes body) (M_state (first body) environment return break continue throw) return break continue throw)))))
 
 (define M_state-try
-  (lambda (statement state return break continue throw)
+  (lambda (statement environment return break continue throw)
     (call/cc
      (lambda (jump)
        (let* ((finallyBlock (finallyBlock (finally statement)))
               (try-block (tryBlock (try statement)))
-              (new-return (lambda (v) (begin (M_state-block finallyBlock state return break continue throw) (return v))))
+              (new-return (lambda (v) (begin (M_state-block finallyBlock environment return break continue throw) (return v))))
               (new-break (lambda (env) (break (M_state-block finallyBlock env return break continue throw))))
               (new-continue (lambda (env) (continue (M_state-block finallyBlock env return break continue throw))))
-              (new-throw (throwCatch (catch statement) state return break continue throw jump finallyBlock)))
+              (new-throw (throwCatch (catch statement) environment return break continue throw jump finallyBlock)))
          (M_state-block finallyBlock
-                          (M_state-block try-block state new-return new-break new-continue new-throw)
+                          (M_state-block try-block environment new-return new-break new-continue new-throw)
                           return break continue throw))))))
 
 (define tryBlock
@@ -238,29 +239,29 @@
 
 
 (define findScope
-  (lambda (function state)
+  (lambda (function environment)
     (cond
-      ((null? state) (error 'findScope "Scope not identified"))
-      ((declared?-list function (caar state)) state)
-      (else (findScope function (cdr state))))))
+      ((null? environment) (error 'findScope "Scope not identified"))
+      ((declared?-list function (caar environment)) environment)
+      (else (findScope function (cdr environment))))))
 
-(define pushFrame
-  (lambda (state)
-    (cons (newFrame) state)))
+(define push-frame
+  (lambda (environment)
+    (cons (newFrame) environment)))
 
-(define popFrame
-  (lambda (state)
-    (cdr state)))
+(define pop-frame
+  (lambda (environment)
+    (cdr environment)))
 
-(define topFrame car)
-(define rest cdr)
+(define topframe car)
+(define remainingframes cdr)
 
-(define declared?-state
-  (lambda (var state)
+(define declared?-environment
+  (lambda (var environment)
     (cond
-      ((null? state) #f)
-      ((declared?-list var (variables (topFrame state))) #t)
-      (else (declared?-state var (rest state))))))
+      ((null? environment) #f)
+      ((declared?-list var (variables (topframe environment))) #t)
+      (else (declared?-environment var (remainingframes environment))))))
 
 (define declared?-list
   (lambda (var list)
@@ -271,19 +272,20 @@
 
 
 (define lookup
-  (lambda (var state)
-    (let ((value (lookupState var state)))
+  (lambda (var environment)
+    (let ((value (lookup-in-env var environment)))
       (if (eq? 'novalue value)
           (error 'error "variable used without an assigned value")
           value))))
-(define lookupState
-  (lambda (var state)
-    (cond
-      ((null? state) (error 'error "Variable not defined"))
-      ((declared?-list var (variables (topFrame state))) (lookupFrame var (topFrame state)))
-      (else (lookupState var (cdr state))))))
 
-(define lookupFrame
+(define lookup-in-env
+  (lambda (var environment)
+    (cond
+      ((null? environment) (error 'error "Variable not defined"))
+      ((declared?-list var (variables (topframe environment))) (lookup-in-frame var (topframe environment)))
+      (else (lookup-in-env var (cdr environment))))))
+
+(define lookup-in-frame
   (lambda (var frame)
     (cond
       ((not (declared?-list var (variables frame))) (error 'error "Variable not defined"))
@@ -303,36 +305,36 @@
       (else (getValue (- n 1) (cdr l))))))
 
 (define insert
-  (lambda (var val state)
-    (if (declared?-list var (variables (car state)))
+  (lambda (var val environment)
+    (if (declared?-list var (variables (car environment)))
         (error 'error "Reassigning an already defined variable")
-        (cons (addtoFrame var val (car state)) (cdr state)))))
+        (cons (add-to-frame var val (car environment)) (cdr environment)))))
 
 (define update
-  (lambda (var val state)
-    (if (declared?-state var state)
-        (updateBinding var val state)
+  (lambda (var val environment)
+    (if (declared?-environment var environment)
+        (update-existing var val environment)
         (error 'error "Variable referenced but not declared"))))
 
-(define addtoFrame
+(define add-to-frame
   (lambda (var val frame)
     (list (cons var (variables frame)) (cons val (store frame)))))
 
-(define updateBinding
-  (lambda (var val state)
-    (if (declared?-list var (variables (car state)))
-        (cons (updateFrame var val (topFrame state)) (rest state))
-        (cons (topFrame state) (updateBinding var val (rest state))))))
+(define update-existing
+  (lambda (var val environment)
+    (if (declared?-list var (variables (car environment)))
+        (cons (update-in-frame var val (topframe environment)) (remainingframes environment))
+        (cons (topframe environment) (update-existing var val (remainingframes environment))))))
 
-(define updateFrame
+(define update-in-frame
   (lambda (var val frame)
-    (list (variables frame) (updateFrameStore var val (variables frame) (store frame)))))
+    (list (variables frame) (update-in-frame-store var val (variables frame) (store frame)))))
 
-(define updateFrameStore
+(define update-in-frame-store
   (lambda (var val variableList valueListt)
     (cond
       ((eq? var (car variableList)) (updateBox var val variableList valueListt))
-      (else (cons (car valueListt) (updateFrameStore var val (cdr variableList) (cdr valueListt)))))))
+      (else (cons (car valueListt) (update-in-frame-store var val (cdr variableList) (cdr valueListt)))))))
 
 (define updateBox
   (lambda (var val variableList valueListt)
@@ -340,11 +342,11 @@
       (set-box! (car valueListt) val) valueListt)))
       
 (define addParameter
-  (lambda (parameter parameterValueue state)
+  (lambda (parameter parameterValueue environment)
     (cond
-      ((and (null? parameter) (null? parameterValueue)) state)
+      ((and (null? parameter) (null? parameterValueue)) environment)
       ((or (null? parameter) (null? parameterValueue)) (error 'error "Incorrect number of arguments provided to function."))
-      (else (addParameter (cdr parameter) (cdr parameterValueue) (insert (car parameter) (box (car parameterValueue)) state))))))
+      (else (addParameter (cdr parameter) (cdr parameterValueue) (insert (car parameter) (box (car parameterValueue)) environment))))))
 
 (define newstate
   (lambda ()
@@ -353,9 +355,12 @@
 (define newFrame
   (lambda ()
     '(() ())))
+	
+;-----------------
+; HELPER FUNCTIONS
+;-----------------
 
 (define first car)
-
 
 (define statementType car)
 (define variables car)
@@ -367,25 +372,25 @@
 (define operand2 caddr)
 
 
-(define checkforOperand2?
+(define exists-operand2?
   (lambda (statement)
     (not (null? (cddr statement)))))
 
-(define checkforOperand3?
+(define exists-operand3?
   (lambda (statement)
     (not (null? (cdddr statement)))))
 
 (define get cadr)
 (define getVar cadr)
 (define getVal caddr)
-(define value? checkforOperand2?)
+(define value? exists-operand2?)
 (define getLeft cadr)
 (define getRight caddr)
 
 (define then caddr)
 (define else cadddr)
 (define body caddr)
-(define else? checkforOperand3?)
+(define else? exists-operand3?)
 (define try cadr)
 (define catch caddr)
 (define finally cadddr)

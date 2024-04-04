@@ -14,8 +14,8 @@
   (lambda (expr environment throw)
     (cond
       ((number? expr) expr)
-      ((eq? expr 'true) "true")
-      ((eq? expr 'false) "false")
+      ((eq? expr 'true) #t)
+      ((eq? expr 'false) #f)
       ((not (list? expr)) (lookup expr environment))
       (else (evaluateOperator expr environment throw)))))
 
@@ -141,7 +141,10 @@
 
 (define M_state-return
   (lambda (statement environment return throw)
-        (return (eval-expression (get statement) environment throw))))
+    (let ((result (eval-expression (get statement) environment throw)))
+      (return (cond ((boolean? result) (if result 'true 'false))
+                    (else result))))))
+
 
 (define M_state-declare
   (lambda (statement environment throw)

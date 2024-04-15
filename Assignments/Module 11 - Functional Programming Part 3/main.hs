@@ -19,8 +19,11 @@ yourfunction x maybeList testFunction = do
   if testFunction x then Just (list ++ [x]) else Nothing
 
 checklist :: [a] -> (a -> Bool) -> Maybe [a]
-checklist xs testFunction = foldr (helper testFunction) (Just []) xs where
-  helper test x maybelist = yourfunction x maybelist test
+checklist xs testFunction = foldl helper (Just []) xs
+  where
+    helper maybelist x = do
+      list <- maybelist
+      if testFunction x then Just (list ++ [x]) else Nothing
 
 checkappend :: Maybe [a] -> Maybe [a] -> (a -> Bool) -> Maybe [a]
 checkappend maybeList1 maybeList2 testFunction = do

@@ -1,0 +1,29 @@
+class List {
+  var val;
+  var next;
+
+  function getNext() {
+    return this.next;
+  }
+
+  function makeList(x) {
+    if (x == 0)
+      this.next = 0;
+    else {
+      this.next = new List();
+      this.next.setVal(this.val+1);
+      this.next.makeList(x-1);
+    }
+  }
+
+  function setVal(x) {
+    this.val = x;
+  }
+
+  static function main() {
+    var l = new List();
+    l.setVal(10);
+    l.makeList(5);
+    return l.getNext().getNext().getNext().getNext().getNext().val;
+  }
+}

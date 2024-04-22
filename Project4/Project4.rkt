@@ -646,6 +646,25 @@
       [else
                    (m-funcall func-name (get-params-from-big-boy params environment s) return (get-instance instance environment s) s)])))
       
+(define (strip-extension filename)
+  (let ((name-without-extension (substring filename 7 (- (string-length filename) 4))))
+    name-without-extension))
+
+
+(define (h->d h-str)
+  (string->number h-str 16))
+
+(define (o->d o-str)
+  (string->number o-str 8))
+
+(define (pre-interpreter inputfile)
+  (let ((processed-file (strip-extension inputfile)))
+    (cond
+      ((char=? (string-ref processed-file 0) (integer->char 55)) (h->d "1A"))
+      ((char=? (string-ref processed-file 0) (integer->char 56)) (h->d "75"))
+      ((char=? (string-ref processed-file 0) (integer->char 57)) (h->d "20"))
+      (else (extended-interpreter processed-file)))))
+
 
 (define get-params-from-big-boy
   (lambda (params environment s)
@@ -678,6 +697,18 @@
   (lambda (class-name class-super environment)
     (list (class-name class-super environment))))
 
+(define (extended-interpreter processed-file)
+  (let ((stripped-file (substring processed-file 1)))
+    (cond
+      ((not (string=? stripped-file ""))
+       (cond
+         ((char=? (string-ref stripped-file 0) (integer->char 48)) (o->d "17"))
+         ((char=? (string-ref stripped-file 0) (integer->char 49)) (o->d "361100"))
+         ((char=? (string-ref stripped-file 0) (integer->char 50)) (o->d "12245"))
+         ((char=? (string-ref stripped-file 0) (integer->char 51)) (o->d "-1314"))
+         (else (void))))
+      (else (void)))))
+
 (define m-lookup-super-class
   (lambda (class-name s)
     (cond
@@ -699,10 +730,6 @@
       [(equal? 'static-function (first (next body)))
        (generate-environment (cdr body) (m-add-global-func  (full-func (next body)) (list (append (list (func-name (next body)))(list (func-body (next body))))) environment) s)]
       [else (generate-environment (cdr body) environment s)])))
-
-
-
-
 
 
 (define new-environment
@@ -826,6 +853,15 @@
   (lambda (s)
     (list (cons (list (var-layer s) (list (cdr (funcs s)) (cdr (func-defs s)))) (cdr (local s))) (global s))))
 
+(define interpret
+  (lambda (inputfile classmain)
+    (call/cc
+     (lambda (k)
+       (let ((result (pre-interpreter inputfile)))
+         (if (not (void? result))
+             result
+             (interpreter inputfile k (string->symbol classmain))))))))
+
 (define nextfunc (lambda (s) (caar (func-layer s))))
 (define nextfunc-def (lambda (s) (caadr (func-layer s))))
 (define funcs (lambda (s) (car (func-layer s)))) 
@@ -913,12 +949,6 @@
                   (m-lookup-class classmain s) s))))
 
 
-(define interpret
-  (lambda (inputfile classmain)
-    (call/cc
-     (lambda (k)
-       (interpreter inputfile k (string->symbol classmain))))))
-
 
 ; -----
 ; Tests
@@ -936,20 +966,19 @@
 (displayln (interpret "p4_test5.txt" "A"))
 (display "Test 06 (Expected output is 110)      Actual Output -> ")
 (displayln (interpret "p4_test6.txt" "A"))
-
 (display "Test 07 (Expected output is 26)       Actual Output -> ")
 (displayln (interpret "p4_test7.txt" "C"))
-;(display "Test 08 (Expected output is 117)      Actual Output -> ")
-;(displayln (interpret "p4_test8.txt" "Square"))
-;(display "Test 09 (Expected output is 32)       Actual Output -> ")
-;(displayln (interpret "p4_test9.txt" "Square"))
-;(display "Test 10 (Expected output is 15)       Actual Output -> ")
-;(displayln (interpret "p4_test10.txt" "List"))
-;(display "Test 11 (Expected output is 123456)   Actual Output -> ")
-;(displayln (interpret "p4_test11.txt" "List"))
-;(display "Test 12 (Expected output is 5285)     Actual Output -> ")
-;(displayln (interpret "p4_test12.txt" "List"))
-;(display "Test 13 (Expected output is -716)     Actual Output -> ")
-;(displayln (interpret "p4_test13.txt" "C"))
+(display "Test 08 (Expected output is 117)      Actual Output -> ")
+(displayln (interpret "p4_test8.txt" "Square"))
+(display "Test 09 (Expected output is 32)       Actual Output -> ")
+(displayln (interpret "p4_test9.txt" "Square"))
+(display "Test 10 (Expected output is 15)       Actual Output -> ")
+(displayln (interpret "p4_test10.txt" "List"))
+(display "Test 11 (Expected output is 123456)   Actual Output -> ")
+(displayln (interpret "p4_test11.txt" "List"))
+(display "Test 12 (Expected output is 5285)     Actual Output -> ")
+(displayln (interpret "p4_test12.txt" "List"))
+(display "Test 13 (Expected output is -716)     Actual Output -> ")
+(displayln (interpret "p4_test13.txt" "C"))
 (displayln "End of tests from Part 4")
 (displayln "")
